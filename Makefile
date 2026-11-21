@@ -10,3 +10,4 @@ apply:
 destroy:
 	terraform init -input=false
 	terraform destroy -input=false -auto-approve $(VAR_ARGS)
+
