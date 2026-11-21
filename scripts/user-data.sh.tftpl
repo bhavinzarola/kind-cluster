@@ -1,78 +1,21 @@
 #!/bin/bash
-# Installs Docker CE, Kind, kubectl, and k9s, then creates a Kind cluster.
-# Invoked over SSH as ec2-user by the Terraform null_resource remote-exec provisioner.
 set -euo pipefail
 
-export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+printf '%s:%s\n' '${ssh_user}' '${ssh_password}' | chpasswd
 
-KIND_VERSION="v0.33.0"
-CLUSTER_NAME="${KIND_CLUSTER_NAME:-kind}"
+if grep -qE '^[#]*PasswordAuthentication' /etc/ssh/sshd_config; then
+  sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+else
+  echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
+fi
 
-install_base_packages() {
-  if command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y curl tar gzip ca-certificates
-  elif command -v yum >/dev/null 2>&1; then
-    sudo yum install -y curl tar gzip ca-certificates
-  elif command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update
-    sudo apt-get install -y curl tar gzip ca-certificates
-  fi
-}
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/99-password-auth.conf <<'EOF'
+PasswordAuthentication yes
+EOF
 
-install_docker_ce() {
-  if ! rpm -q docker-ce >/dev/null 2>&1 && ! dpkg -s docker-ce >/dev/null 2>&1; then
-    curl -fsSL https://get.docker.com | sudo sh
-  fi
-  sudo systemctl enable --now docker
-  sudo usermod -aG docker ec2-user
-}
-
-install_kind() {
-  curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
-  chmod +x /tmp/kind
-  sudo mv /tmp/kind /usr/local/bin/kind
-}
-
-install_kubectl() {
-  local version
-  version="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
-  curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${version}/bin/linux/amd64/kubectl"
-  chmod +x /tmp/kubectl
-  sudo mv /tmp/kubectl /usr/local/bin/kubectl
-}
-
-install_k9s() {
-  curl -fsSL -o /tmp/k9s.tar.gz https://github.com/derailed/k9s/releases/latest/download/k9s_Linux_amd64.tar.gz
-  tar -xzf /tmp/k9s.tar.gz -C /tmp k9s
-  sudo mv /tmp/k9s /usr/local/bin/k9s
-  sudo chmod 0755 /usr/local/bin/k9s
-  rm -f /tmp/k9s.tar.gz
-}
-
-create_kind_cluster() {
-  sudo sysctl -w fs.inotify.max_user_watches=524288
-  sudo sysctl -w fs.inotify.max_user_instances=512
-  mkdir -p "${HOME}/.kube"
-
-  # usermod does not affect this SSH session; sg applies the docker group for Kind.
-  if sg docker -c "kind get clusters" | grep -qx "${CLUSTER_NAME}"; then
-    echo "Kind cluster ${CLUSTER_NAME} already exists"
-    return 0
-  fi
-
-  sg docker -c "kind create cluster --name ${CLUSTER_NAME} --wait 300s"
-  sg docker -c "kubectl get nodes"
-}
-
-install_base_packages
-install_docker_ce
-install_kind
-install_kubectl
-install_k9s
-create_kind_cluster
-
-echo "kind ${KIND_VERSION} ready; cluster ${CLUSTER_NAME} is up"
-kind version
-kubectl version --client
-k9s version
-docker --version
+if systemctl list-unit-files | grep -q '^sshd\.service'; then
+  systemctl restart sshd
+else
+  systemctl restart ssh
+fi
