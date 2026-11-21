@@ -1,9 +1,10 @@
 provider "aws" {
   region = var.aws_region
 
-  # Use the local AWS CLI profile instead of the EC2 instance metadata service.
-  profile                  = "default"
-  shared_credentials_files = [pathexpand("~/.aws/credentials")]
-  shared_config_files      = [pathexpand("~/.aws/config")]
+  # Same files the AWS CLI uses. Do not set profile = "default": that lookup
+  # fails when Terraform is started from make, then the provider falls through
+  # to the EC2 metadata service.
+  shared_credentials_files = ["${replace(pathexpand("~"), "\\", "/")}/.aws/credentials"]
+  shared_config_files      = ["${replace(pathexpand("~"), "\\", "/")}/.aws/config"]
   skip_metadata_api_check  = true
 }
